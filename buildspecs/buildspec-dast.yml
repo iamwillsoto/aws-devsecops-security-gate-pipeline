@@ -1,0 +1,10 @@
+version: 0.2
+
+phases:
+  install:
+    commands:
+      - echo "Preparing DAST scan environment..."
+  build:
+    commands:
+      - echo "Running DAST scan..."
+      - bash scripts/run-dast.sh

@@ -1,0 +1,12 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.11
+    commands:
+      - echo "Installing IaC scan dependencies..."
+  build:
+    commands:
+      - echo "Running IaC scan..."
+      - bash scripts/run-iac-scan.sh

@@ -1,0 +1,12 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      nodejs: 20
+    commands:
+      - echo "Installing SCA dependencies..."
+  build:
+    commands:
+      - echo "Running SCA scan..."
+      - bash scripts/run-sca.sh
