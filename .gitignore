@@ -1,9 +1,20 @@
+# Terraform
 .terraform/
 *.tfstate
 *.tfstate.*
+terraform.tfvars
 .terraform.lock.hcl
-node_modules/
+
+# Secrets / environment
 .env
-*.log
+*.pem
+*.key
+
+# Node
+node_modules/
+
+# System files
 .DS_Store
-reports/
+
+# Logs
+*.log
