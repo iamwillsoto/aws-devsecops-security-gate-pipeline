@@ -1,0 +1,139 @@
+name: DevSecOps Release Gate
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+env:
+  AWS_REGION: us-east-1
+  IAC_PROJECT: aws-devsecops-security-gate-iac
+  SCA_PROJECT: aws-devsecops-security-gate-sca
+  SAST_PROJECT: aws-devsecops-security-gate-sast
+  DAST_PROJECT: aws-devsecops-security-gate-dast
+
+jobs:
+  secrets-scan:
+    name: Secrets Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run GitLeaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  trigger-aws-security-scans:
+    name: Trigger AWS CodeBuild Security Scans
+    runs-on: ubuntu-latest
+    needs: secrets-scan
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_DEVSECOPS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_DEVSECOPS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Start IaC scan
+        id: iac
+        run: |
+          BUILD_ID=$(aws codebuild start-build \
+            --project-name "$IAC_PROJECT" \
+            --query 'build.id' \
+            --output text)
+          echo "build_id=$BUILD_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Start SCA scan
+        id: sca
+        run: |
+          BUILD_ID=$(aws codebuild start-build \
+            --project-name "$SCA_PROJECT" \
+            --query 'build.id' \
+            --output text)
+          echo "build_id=$BUILD_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Start SAST scan
+        id: sast
+        run: |
+          BUILD_ID=$(aws codebuild start-build \
+            --project-name "$SAST_PROJECT" \
+            --query 'build.id' \
+            --output text)
+          echo "build_id=$BUILD_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Start DAST scan
+        id: dast
+        run: |
+          BUILD_ID=$(aws codebuild start-build \
+            --project-name "$DAST_PROJECT" \
+            --query 'build.id' \
+            --output text)
+          echo "build_id=$BUILD_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for CodeBuild scans
+        run: |
+          set -e
+
+          wait_for_build () {
+            BUILD_ID=$1
+            NAME=$2
+
+            echo "Waiting for $NAME build: $BUILD_ID"
+
+            while true; do
+              STATUS=$(aws codebuild batch-get-builds \
+                --ids "$BUILD_ID" \
+                --query 'builds[0].buildStatus' \
+                --output text)
+
+              echo "$NAME status: $STATUS"
+
+              if [ "$STATUS" = "SUCCEEDED" ]; then
+                echo "$NAME passed"
+                break
+              fi
+
+              if [ "$STATUS" = "FAILED" ] || [ "$STATUS" = "FAULT" ] || [ "$STATUS" = "STOPPED" ] || [ "$STATUS" = "TIMED_OUT" ]; then
+                echo "$NAME failed with status: $STATUS"
+                exit 1
+              fi
+
+              sleep 20
+            done
+          }
+
+          wait_for_build "${{ steps.iac.outputs.build_id }}" "IaC"
+          wait_for_build "${{ steps.sca.outputs.build_id }}" "SCA"
+          wait_for_build "${{ steps.sast.outputs.build_id }}" "SAST"
+          wait_for_build "${{ steps.dast.outputs.build_id }}" "DAST"
+
+      - name: Write release gate summary
+        run: |
+          {
+            echo "## DevSecOps Release Gate Summary"
+            echo ""
+            echo "| Control | Execution Layer | Result |"
+            echo "|---|---|---|"
+            echo "| Secrets Scan | GitHub Actions / GitLeaks | Passed |"
+            echo "| IaC Scan | AWS CodeBuild / Checkov | Passed |"
+            echo "| SCA Scan | AWS CodeBuild / Snyk | Passed |"
+            echo "| SAST Scan | AWS CodeBuild / SonarQube Cloud | Passed |"
+            echo "| DAST Scan | AWS CodeBuild / OWASP ZAP | Passed |"
+            echo ""
+            echo "Security scan evidence is stored in Amazon S3 and execution logs are centralized in CloudWatch Logs."
+          } >> "$GITHUB_STEP_SUMMARY"
